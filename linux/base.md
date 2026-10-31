@@ -17,6 +17,7 @@ mkdir /data/docs    # 新建 /data/docs/
 mkdir a b c         # 新建 /home/chriskim/a/，/home/chriskim/b/，/home/chriskim/c/
 mkdir x/y/z         # 报错 No such file or directory
 mkdir -p x/y/z      # 新建 /home/chriskim/x/，/home/chriskim/x/y/，/home/chriskim/x/y/z/
+mkdir -p proj/{x/y/z} # 新建 proj/x, proj/y, proj/z
 ```
 ### `touch`命令
 - 用途：创建空文件，支持批量创建
@@ -26,23 +27,46 @@ mkdir -p x/y/z      # 新建 /home/chriskim/x/，/home/chriskim/x/y/，/home/chr
 ## （3）查找文件和目录
 当我们知道文件的一些大致信息时，我们会使用 `find` 命令来查找，find默认会从指定的目录开始，递归的依次向下查找文件和目录
 
+同时介绍一下 `which`，`where is`, `locate`
+
  `find` 的一般结构如下：
  ```bash
- find [起始目录] [查询条件]
+ find [起始目录] [查询条件] [动作]
  ```
  常用的查找条件有：
  - `-name 名称` ：按照名称来查找，区分大小写
  - `-inname 名称` ：按照名称来查找，不区分大小写
- - `type f` ：只找普通文件
- - `type d` ：只找目录
- - `maxdepth n`：最多向下查找几层目录
+ - `-type f` ：只找普通文件
+ - `-type d` ：只找目录
+ - `-maxdepth n`：最多向下查找几层目录
+ - `-empty`：只找空文件
+ - `-user tom`: 属主
+ - `-prem  644`: 权限644
+ - `-o` / `!`: 或者，取反
+ 
+ 动作需要加上`-exec`，后面接要做的操作
+
+ ```bash
+ find logs -name "*.log" -mtime +30 -size +1m -exec rm {} \; # 表示将每一个文件都执行一次清楚操作, {} 是一个前面传下来的变量的占位符，也就是每一个 *.log 文件，\ 是结束符
+ ```
+ ```bash
+ iamnabins@LAPTOP-JIRKG8RP:~/code$ which ls
+ /usr/bin/ls
+ iamnabins@LAPTOP-JIRKG8RP:~/code$ whereis ls
+ ls: /usr/bin/ls /usr/share/man/man1/ls.1.gz # 程序，源码，手册页
+ ```
+
+> locate 文件名 , 用于查预先建好的数据库，数据库通常每天更新一次，所以新文件先upodatedb
+
+
 
  ## （4）复制对象
  使用 `cp` 命令来复制文件和目录：
  ```bash
  cp [要复制的对象路径] [复制的目标路径]
  ```
- - 其中，我们可以添加 `-r` 参数来实现递归复制，通常在复制目录时会使用
+ - 复制目录时，需要加`-r`参数，否则cp命令会跳过其执行
+ - `-a`参数可以归档，可以保留文件权限，修改时间等信息
  - 目标路径若父目录不存在，则会报错
 
  > `cp` 命令在本体和目标文件/目录一样时，会覆盖目标
@@ -94,7 +118,32 @@ mkdir -p x/y/z      # 新建 /home/chriskim/x/，/home/chriskim/x/y/，/home/chr
 ### `tail` 命令
 - 位置参数：查看的问价路径
 - -n [行数]：要查看的行数，默认10行
-- -f：持续追踪文件尾部，若增多则打印，适用于日志
+- `-f`：持续追踪文件尾部，若增多则打印，适用于日志
+
+## （9）统计文本信息
+
+### `wc` 命令
+```bash
+wc notes.txt
+3 9 48 notes.txt     # 3行，9个词，48个字节
+
+wc -l notes.txt
+3                    # 只显示行号
+
+file notes.txt dir   # 根据文件内容来判断文件类型
+notes.txt: ASCII text
+dir:       directory 
+
+stat a.txt           #stat 命令可以列出文件的详细信息
+  File: a.txt
+  size: 19              Blocks: 8          IO Block: 4096   regular file
+Device: 8,48    Inode: 67661       Links: 1
+Access: (0644/-rw-r--r--)  Uid: ( 1000/iamnabins)   Gid: ( 1000/iamnabins)
+Access: 2026-10-31 19:25:35.865159089 +0800 # atime 最后读取时间
+Modify: 2026-10-31 19:25:31.405159087 +0800 # mtime 最后修改时间，ls -l 显示的就是这个
+Change: 2026-10-31 19:25:31.405159087 +0800 # ctime 属性最后修改时间（权限，属主）
+ Birth: 2026-10-31 19:25:16.993159090 +0800 # 创建时间
+```
 
 ## （8）vim 和 nano
 ### 1. `vim` 
@@ -124,6 +173,27 @@ mkdir -p x/y/z      # 新建 /home/chriskim/x/，/home/chriskim/x/y/，/home/chr
 - `2>>` :错误信息追加
 - `&>`：标准输出 + 标准错误一起重定向
 - `2>&1`：把标准错误重定向到标准输出
+
+```bash
+ls /etc/hostname /nope > /dev/null 2>&1   # 将标准输出放到 "黑洞" 中，并且错误输出也输出到里面去
+
+iamnabins@LAPTOP-JIRKG8RP:~/code$ wc -l a.txt
+1 a.txt
+iamnabins@LAPTOP-JIRKG8RP:~/code$ wc -l < a.txt
+1
+
+iamnabins@LAPTOP-JIRKG8RP:~/code$ cat > a.txt << EOF  # 使用 << 会进入交互模式，将交互输入的东西存起来，在检测到结束符之后，将其提交给前面的命令
+> 你好，我是linux小猫
+> 我喜欢一切美好
+> NEVER
+> GIVE 
+> EOF
+iamnabins@LAPTOP-JIRKG8RP:~/code$ cat a.txt
+你好，我是linux小猫
+我喜欢一切美好
+NEVER
+GIVE
+```
 
 ## （10）命令连接
 用于将多个命令组合在一起运行，常用的连接符号有：
