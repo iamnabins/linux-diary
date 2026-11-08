@@ -193,7 +193,7 @@ $ chattr -i file.txt      # 这样就可以了。。。
 - `-z`：gzip
 - `-j`：bzip
 - `-J`；xz
-- `-C`：解压到目录
+- `-C`：解压到目录，打包时是说去哪里拿要解压的东西
 
 > -c、-x、-t、-r、-u、-d、-A 是互斥的操作模式，一次只能选一个。
 
@@ -470,14 +470,29 @@ $ systemctl list-units --type=service --state=running --no-pager | head -2
 
 关于网络的一些基础知识，可以前往这里进行了解：[大白话半小时理解网络](https://www.bilibili.com/video/BV1tseyzCEoF)，这里不过多赘述。
 
+这里用 ai 整理一些网络上的协议：
+| 项目 | DHCP | ARP | NAT |
+|------|------|-----|-----|
+| **全称** | Dynamic Host Configuration Protocol（动态主机配置协议） | Address Resolution Protocol（地址解析协议） | Network Address Translation（网络地址转换） |
+| **干什么** | 自动给设备分配 IP 地址、子网掩码、默认网关、DNS、租期 | 已知对方 IP，查出对应的 MAC 地址 | 把内网私有 IP/端口 翻译成公网 IP/端口（及反向） |
+| **解决什么问题** | 免去手动配置网络参数，避免 IP 冲突，即插即用 | 局域网底层转发只认 MAC，需要把 IP 翻译成 MAC | 内网设备多但公网 IP 少，让多设备共用一个公网 IP 上网 |
+| **工作层次** | 应用层（基于 UDP 67/68 端口） | 网络层与链路层之间（常归为链路层辅助协议） | 网络层（改 IP 包头，常结合端口做 NAPT） |
+| **作用范围** | 局域网内（DHCP 服务器所在广播域） | 局域网内（同一广播域） | 跨网边界，通常在路由器/网关上 |
+| **改什么** | 不改数据包，负责"发放"配置 | 不改进程中的数据，只查表/广播获取 MAC | 改 IP 包头里的源/目的 IP 和端口 |
+| **触发时机** | 设备刚联网、租期到期续租时 | 发数据前不知道对方 MAC 时 | 内网数据出公网、公网回包进内网时 |
+| **典型流程** | DORA：Discover → Offer → Request → Ack | 查缓存 → 广播请求 → 单播应答 → 写缓存 | 出：源IP换成公网IP并记录映射；回：按映射反向翻译 |
+| **家用场景** | 路由器兼任 DHCP 服务器，给设备发 `192.168.1.x` | 电脑问网关 `192.168.1.1` 的 MAC | 路由器把 `192.168.1.5` 换成 WAN 口公网 IP 上网 |
+| **是否占主机位** | 服务器本身占一个 IP（若独立）；它发放的地址占主机位 | 不占，纯查询机制 | 不占，是转换机制 |
+| **安全隐患** | 流氓 DHCP 服务器可发错误配置（DHCP 欺骗） | ARP 欺骗：伪造应答冒充网关，可窃听/断网 | 外部无法直接访问内网设备；配置不当可能暴露内网 |
+| **类比** | 发身份证+户口本 | 问路找身份证 | 出门换护照 |
+| **一句话** | 先给你发网络身份 | 把 IP 翻译成 MAC 好发帧 | 内网地址换成公网地址出网 |
+
 ### 网络配置
 
-查询设备网卡，我们可以使用 `ip link` 和 `ip addr` 命令。
+ip 被操作系统绑定到了网卡上，查询设备网卡，我们可以使用 `ip link` 和 `ip addr` 命令。
 
-其中，`ip link` 关注设备自身和其 mac 地址。`ip addr` 还额外关注 ip
+其中，`ip link` 关注设备自身和其 mac 地址。`ip addr` 关注网卡的IP。
 信息，其中，addr 是 address 的简写。
-
-查询网关，可以使用 `ip route` 。
 
 ```bash
 ip -br addr show lo     # -br 表示简短的表示，lo(loop) 表示回环地址
@@ -486,8 +501,35 @@ lo       UNKNOWN        127.0.0.1/8 10.255.255.254/32 ::1/128
 添加临时 ip 地址（重启即失效）：`ip addr add 192.168.1.50/24 dev eth0`，这里的网卡 eth0 是由于本人使用的 wsl，本质是 windows 系统创建的一个虚拟交换机来实现的，他并不会获取到硬件层面上的 PCI 插槽上的网卡名，所以回退使用了过去的网卡命名。如果是新系统的话，名字可能是别的。
 
 如果想要永久生效，需要写入配置文件，这里以 Ubentu 的写入地址 **/etc/netplan/*.yaml** 为例。
+```ini
+TYPE=Ethernet
+BOOTPROTO=static    # static 静态 · dhcp 自动
+NAME=ens33
+DEVICE=ens33
+ONBOOT=yes          # 开机启用
+IPADDR=192.168.1.10 # IP 地址
+PREFIX=24           # 掩码位数 (或 NETMASK)
+GATEWAY=192.168.1.1 # 默认网关
+DNS1=223.5.5.5      # DNS 服务器
+```
+一般使用 `nmcli` 来编辑这个。
+
+查询网关使用 `ip route`
+```bash
+ip route
+default via 192.168.1.1 dev eth0 proto kernel metric 45    # metric 表示优先级
+default via 26.0.0.1 dev eth2 proto kernel metric 9291 
+26.0.0.0/8 dev eth2 proto kernel scope link metric 291     # 就是子网
+26.0.0.1 dev eth2 proto kernel scope link metric 9291      # 意思就是，信息要传给26.0.0.1网关时，需要走 eth2 这个网卡
+192.168.1.0/24 dev eth0 proto kernel scope link metric 301 
+192.168.1.1 dev eth0 proto kernel scope link metric 45 
+```
 
 ### 远程管理
+
+
+
+
 
 ## Shell 脚本
 
@@ -767,7 +809,229 @@ echo ${arr[0]} / ${arr[@]} / ${#arr[@]} && echo ${arr[*]}
 ---
 
 下面给出一个用 **shell** 脚本实现的一个例子：
+```bash
+SRC=~/site
+BACKUP=~/backup
+FILE="$BACKUP/site_$(date +%F).tar.gz"
+
+tar -czf $FILE -C ~ site 
+find $BACKUP -name "site_*.tar.gz" -mtime +7 -delete
+echo "已备份到：$FILE"
+```
+
+然后，再使用 crontab 编辑一条新的规则：
+```bash
+30 2 * * * /home/str/backup.sh
+```
+
+## GCC，Make，GDB
+
+### GCC
+linux 自带 GCC编译器，可以编译c语言
+```bash
+gcc hello.c -o hello
+./hello
+```
+
+经过了如下的过程：
+```text
+
+预处理                 编译                 汇编                 链接
+  │                     │                    │                    │
+  ▼                     ▼                    ▼                    ▼
+┌─────────┐  gcc -E  ┌─────────┐  gcc -S  ┌─────────┐  gcc -c  ┌─────────┐   gcc   ┌─────────┐
+│ hello.c ├─────────►│ hello.i ├─────────►│ hello.s ├─────────►│ hello.o ├────────►│  hello  │
+└─────────┘          └─────────┘          └─────────┘          └─────────┘         └─────────┘
+ 源代码               预处理后             汇编代码             目标文件            可执行文件
+```
+文件后缀以及命令模式可以用 **ESc** 和 **iso** 来简记。如果想要了解某个文件的类型，可以使用 `file <文件>` 来查看。
+
+一些参数：
+- `-Wall` 显示所有警告
+- `-g` 加入调试信息（gdb 必须）
+- `-O2` 开启优化
+- `-D NAME` 定义宏
+- `-I 目录` 头文件目录（预处理所需）
+- `-L 目录` 库文件目录（链接所需）
+- `-l 库名` 链接 lib库名（链接所需）
+- `-lm` 链接数学库 libm
+
+组合起来使用就是：
+```bash
+$ gcc -Wall -g -O2 -I include -L lib main.c -lm -o app
+```
+---
+
+**c 语言使用时用到的库被分为静态库(.a)和动态库(.so)。**
+简单地说，在 c 语言代码编译的时候，静态库的源代码会嵌入到最后的成品中，而动态库则会留下 “我会被用到” 的信息。
 
 
+#### 1. 静态库的制作过程如下，比如我想建一个用于实现加法的库：
+
+第一步，将 c 源代码编译成可执行文件。不需要链接。
+```bash
+gcc -c add.c             # 将 c源代码 编译成可执行文件
+```
+
+第二步，使用 ar 命令来创建库
+```bash
+ar rcs libcalc.a add.o
+# ar 表示 archive（归档），rcs 分别表示：
+# 把文件插入到库里
+# 创建这个库
+# 生成索引（方便以后快速查找）
+# linux 下的静态库以 lib 开头，.a 为后缀，真实的库文件名是 clac.o
+```
+
+第三步，将需要使用该库的文件编译时选择该库
+```bash
+gcc main.c -L. -lcalc -o calc  # 选定当前目录去寻找库目录，并链接名为 clac 的库。
+```
+
+第四步，执行
+```bash
+./clac
+```
+
+---
+#### 2. **动态库**的制作如下：
+
+第一步，生成动态库：
+
+```bash
+$ gcc -shared -fPIC add.c -o libcalc.so
+```
+
+- shared：告诉编译器生成动态库（而不是可执行文件）。
+
+- fPIC：生成位置无关代码（Position Independent Code）。因为动态库在程序运行时才被加载到内存中，内存地址是不确定的，所以必须用 -fPIC 让代码在内存的任何位置都能正常执行。
+
+- o libcalc.so：指定输出的库文件名为 libcalc.so（Linux 下动态库的命名规范通常是 lib 前缀 + .so 后缀）。
 
 
+第二步，编译并链接动态库
+
+```bash
+gcc main.c -L. -lclac.so -o clac2
+```
+
+第三步，运行
+```bash
+./clac2
+```
+
+然后就...：
+```bash
+$ ./clac2
+./calc2: error while loading shared libraries: libcalc.so: cannot open shared object file: No such file or directory
+```
+
+报错的原因是并没有指定用于映射动态库地址环境变量：LD_LIBRARY_PATH，所以还要加上环境变量：
+```bash
+LD_LIBRARY_PATH=. ./clac2
+```
+
+可以使用 `ldd <程序名>` 查看某个程序所需的动态库。
+
+---
+
+### Make
+
+每次手敲来编译 c 源文件很麻烦，于是使用 Make 来简化操作
+
+类似我们前面提到的 crontab ，make 也有一个文件用来记录 “规则”。
+
+基本的语法是这样的：
+```text
+目标 (Target) : 依赖 (Prerequisites)
+<Tab键> 命令 (Command)
+```
+
+下面是一个 makefile 文件：
+```bash
+CC = gcc
+CFLAGS = -Wall -g
+
+calc: main.o add.o
+	$(CC) $(CFLAGS) $^ -o $@
+
+main.o: main.c add.h
+	$(CC) $(CFLAGS) -c $<
+
+add.o: add.c add.h
+	$(CC) $(CFLAGS) -c $<
+
+.PHONY: clean
+clean:
+	rm -f calc *.o
+```
+**make** 会根据修改时间来选择需要重新编译的对象，没有修改过的就不会再重新编译。
+
+其中：
+- $@: 目标文件
+- $^: 冒号右边的所有依赖
+- $<: 冒号右边的第一个依赖
+- .PHONY: 伪目标，当执行 `make clean` 时，会执行 clean 下方指定的命令
+
+---
+
+### GDB
+
+GDB 是调试工具，需要在编译的时候加上 `-g`，使用 `gdb ./sum` 来启动。
+以下是常用的命令：
+| 命令 | 全称 | 功能解释 |
+| :--- | :--- | :--- |
+| **`b`** | break | 设置断点。让程序在指定行或函数处停下来。 |
+| **`r`** | run | 运行程序。如果之前设了断点，程序会停在第一个断点处。 |
+| **`p`** | print | 打印变量的值。查看程序当前运行状态下的数据。 |
+| **`n`** | next | 单步执行（不进入函数）。执行下一行代码，遇到函数直接当作一行跑完。 |
+| **`s`** | step | 单步执行（进入函数）。执行下一行代码，如果遇到自定义函数，会跳进函数内部。 |
+| **`c`** | continue | 继续运行。让程序从当前停下的地方继续往下跑，直到遇到下一个断点或结束。 |
+| **`l`** | list | 查看源码。显示当前执行位置附近的代码。 |
+| **`bt`** | backtrace | 查看调用栈。显示当前函数是被哪些上级函数一层层调用过来的（排查崩溃极好用）。 |
+| **`q`** | quit | 退出 GDB 调试器。 |
+
+---
+
+## 系统监控和日志
+使用 `uptime` 查看 **负载**
+```bash
+$ uptime
+ 15:35:40 up 1 day,  3:56,  1 user,  load average: 0.07, 0.06, 0.01   # 后面三项的平均负载分别是前 1/5/15 分钟的。
+```
+
+平均负载 = 总工作量 ÷ CPU 核心数(可以使用 nproc 查看)，其中工作量
+
+---
+使用 `free -h` 查看内存。（-h 表示 human，即对人类友好的）
+
+```bash
+$ free -h
+               total        used        free      shared  buff/cache   available
+Mem:           7.6Gi       1.3Gi       6.0Gi       3.6Mi       438Mi       6.2Gi
+Swap:          2.0Gi          0B       2.0Gi
+```
+
+| 字段 (free -h) | 字面含义 | 实际代表什么 |
+| :--- | :--- | :--- |
+| **total** | 总量 | 物理内存 / Swap 的总容量 |
+| **used** | 已用 | 已经被应用程序真正占用的内存 |
+| **free** | 完全空闲 | 绝对没有被碰过的内存（通常很小） |
+| **shared** | 共享 | 被多个进程共享的内存（如 tmpfs） |
+| **buff/cache** | 缓冲 + 缓存 | 系统为了加速读写，把硬盘数据缓存到内存里 |
+| **available** | 可用 | **系统还能分给新程序的内存** |
+
+> `available ≈ free + 可回收的缓存(buff/cache)`
+> 
+> 一台跑了很久的服务器，`free` 会很小，因为内存都被拿去当 `buff/cache` 提升性能了。但只要 `available` 足够大，就不会出现
+
+总结：
+
+| 问题 | 命令 | 说明 |
+| :--- | :--- | :--- |
+| **磁盘满了** | `df -h`<br>`du -sh *` | `df -h` 找哪个分区满<br>`du -sh *` 找大目录 |
+| **CPU 高** | `top` (按 P)<br>`ps aux --sort=-%cpu` | `top` 按 P 按 CPU 排序<br>列出最耗 CPU 的进程 |
+| **内存不够** | `free -h`<br>`top` (按 M) | `free -h` 看 available<br>`top` 按 M 按内存排序 |
+| **端口被占** | `ss -tlnp \| grep :80` | 找到 PID 再处理（kill 或排查） |
+| **服务起不来** | `systemctl status 服务`<br>`journalctl -u 服务` | 查看服务状态<br>查看具体报错日志 |
+| **权限被拒** | `ls -l` · `id`<br>`getenforce` | 查看文件权限与当前身份<br>检查 SELinux 是否开启 |
