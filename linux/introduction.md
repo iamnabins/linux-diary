@@ -514,27 +514,123 @@ DNS1=223.5.5.5      # DNS 服务器
 ```
 一般使用 `nmcli` 来编辑这个。
 ```bash
-nmcli con mod eth0 ipv4.addresses 192.168.1.10/24 \  # 这里的 \ 是换行符，为了方便写代码的时候浏览
-> ipv4.getaway 192.168.1.1 ipv4.dns 223.5.5.5 \
-> ipv4.method manual
+# 这里的 \ 是换行符，为了方便写代码的时候浏览
+nmcli con mod eth0 ipv4.addresses 192.168.1.10/24 \  # 配置 ipv4 ip 地址 
+> ipv4.geteway 192.168.1.1 ipv4.dns 223.5.5.5 \  # 注意这里是 geteway, 不是 getaway，这个是在配置下一跳，也就是默认网关
+> ipv4.method manual # 指定配置模式是手动（静态），不采用 DHCP 的分配
+nmcli con up eth0
+nmcli device status  # 查看网卡信息
 ```
 
+这里我想说一下 **dns**，一般来说，家中的域名会丢给网关，也就是路由器，由路由器向 dns 服务器发出解析请求，也就是说，这个 dns 可以填路由器的ip。但是不能不去配置，不然的话就无法使用域名访问了，你也可以填写多个 dns 服务器地址，系统会优先找前面的那个服务器地址: `ipv4.dns 192.168.31.1 223.5.5.5 。
 
 查询网关使用 `ip route`
 ```bash
 ip route
 default via 192.168.1.1 dev eth0 proto kernel metric 45    # metric 表示优先级
-default via 26.0.0.1 dev eth2 proto kernel metric 9291 
+default via 26.0.0.1 dev eth2 proto kernel metric 9291     # 这个是我的 vpn 创建的虚拟网卡，以及其配置的虚拟网关
 26.0.0.0/8 dev eth2 proto kernel scope link metric 291     # 就是子网
 26.0.0.1 dev eth2 proto kernel scope link metric 9291      # 意思就是，信息要传给26.0.0.1网关时，需要走 eth2 这个网卡
 192.168.1.0/24 dev eth0 proto kernel scope link metric 301 
 192.168.1.1 dev eth0 proto kernel scope link metric 45 
 ```
 
+修改主机名使用 `hostnamectl` 命令。
+```bash
+$ hostname set-hostname EXE
+$ cat /etc/hostname
+EXE
+```
+
+ **/etc/hosts** 文件夹里面有着本机的域名映射表，该查询优先于 DNS 查询。
+ **/etc/resolv.conf** 文件夹里面指定 DNS 服务器
+
+ ---
+
+测试网络连通性常用 ping 
+
+```bash
+ping -c 4 https://www.bilibili.com/
+```
+ss（Socket Statistics）是 Linux 系统中用来查看网络连接、监听端口和网络统计信息的命令  
+常用选项:
+- -t: TCP
+- -u: UDP
+- -n: 数字显示
+- -l: 只看监听
+- -p: 显示进程
+
+还可以使用 curl 和 wget 来测试网页和下载文件
+
+---
+
+
 ### 远程管理
+**ssh** 是极其常用的远程管理工具
+
+在使用 ssh 前，建议先了解一下 ssh 的原理，这是一个逻辑比较好理解，却非常巧妙的一个信息传递方式。
+
+**首先，我们需要本地创建一对密钥：公钥和私钥**
+```bash
+ssh-keygen -t ed25519 -f demo_key -N "" -C cat@163.com
+```
+ssh-keygen：生成、管理和转换认证密钥的命令。
+
+- -t ed25519：指定密钥的加密算法为 Ed25519（比传统的 RSA 更现代、更安全且生成的密钥更短）。
+
+- -f demo_key：指定生成的密钥文件名为 demo_key（如果不加此参数，默认文件名是 id_ed25519）。
+
+- -N ""：指定私钥的密码（Passphrase）为空（空字符串）。这代表在使用私钥时不需要额外输入密码，实现真正的“免密”。
+
+- -C stu@linux：添加一段注释（通常写邮箱或用户名），方便在存在多个密钥时进行区分。
+
+结果就是在 **~/.ssh** 文件夹下面出现了 demo_key (私钥)，和 demo_key.pub (公钥)。
 
 
+**在创建了密钥对之后，我们要把公钥交给我们要传递的对象**
+```bash
+ssh-copy-id EXE@1.2.3.4
+```
+可能会有人有疑问，这里并没有指定交给对方哪个公钥。事实上，你当然可以指定交给哪个密钥，使用 **-i** 参数：  
+`ssh-copy-id -i ~/code/linux-diary/demo_key.pub tom@host`
 
+在你敲下 `ssh-copy-id [用户名]@[host]` 时，会去查找名为 id_ed25519 等的文件(没有使用 -f 指定的默认名字)，并将第一个作为公钥传递过去。也就是说，如果指定过名字的话，需要使用 -i 参数
+
+配置了密钥之后，就可以用 ssh 来进行远程连接了
+
+---
+
+**使用 ssh 来进行远程登录**
+```bash
+# ssh [用户名]@[主机ip]
+ssh iamnabins@192.168.31.38
+```
+
+**传文件**
+```bash
+scp <要传的文件> EXE@host:<地址>
+```
+
+---
+
+服务端的 sshd 服务的配置文件在 `/etc/ssh/sshd_config`，有一些常见的可配置选项
+```config
+# /etc/ssh/sshd_config
+Port 2222                 # 将 sshd 服务的默认端口改到 2222
+PermitRootLogin no        # 不允许 root 直接登录
+PasswordAuthentication no # 只允许密钥登录
+```
+改完之后，要使用 `systemctl restart sshd` 来重启服务。
+
+---
+
+### 防火墙
+防火墙在不同的版本里，配置文件的命令有所不同，这里以 Ubuntu 为例：
+
+```bash
+ufw allow 22/tcp
+```
+当然，这里的添加是临时的。永久修改依然要写入配置文件
 
 
 ## Shell 脚本
@@ -558,7 +654,7 @@ bash hello.sh
 source hello.sh # 或者 ". hello.sh"，因此也被称为点执行
 ```
 第一种 `bash hello.sh` 指定使用 bash 来解释执行，无需执行权限  
-第二种 `./hello.sh` 使用 shebeng 解释执行，需要执行权限（chmod +x hello.sh）  
+第二种 `./hello.sh` 使用 shebeng 解释 执行，需要执行权限（chmod +x hello.sh）  
 第三种 `source.sh` 在当前 shell 直接执行
 
 其中前面两种都会开启子shell，而第三种不会。
