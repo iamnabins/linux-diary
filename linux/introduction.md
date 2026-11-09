@@ -513,6 +513,12 @@ GATEWAY=192.168.1.1 # 默认网关
 DNS1=223.5.5.5      # DNS 服务器
 ```
 一般使用 `nmcli` 来编辑这个。
+```bash
+nmcli con mod eth0 ipv4.addresses 192.168.1.10/24 \  # 这里的 \ 是换行符，为了方便写代码的时候浏览
+> ipv4.getaway 192.168.1.1 ipv4.dns 223.5.5.5 \
+> ipv4.method manual
+```
+
 
 查询网关使用 `ip route`
 ```bash
